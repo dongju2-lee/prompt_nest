@@ -13,12 +13,5 @@
             "note": ""
         }
     ],
-    "bad": [
-        {
-            "id": "93da45b3-784b-423c-b0af-d9c1ac9faaae",
-            "name": "LangGraph",
-            "timestamp": 1745169318.5611186,
-            "note": ""
-        }
-    ]
+    "bad": []
 }

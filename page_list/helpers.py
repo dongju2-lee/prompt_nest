@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # 페이지 상수 정의
-HOME_PAGE = "🏠 프롬프트 등록"
+HOME_PAGE = "🏠 트레이스 등록"
 PROMPT_LIST_PAGE = "📋 프롬프트 목록"
 FAVORITE_PAGE = "⭐ 즐겨찾기"
 LANGFUSE_PAGE = "🔍 랭퓨즈 데이터"

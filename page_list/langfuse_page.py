@@ -2,8 +2,10 @@ import streamlit as st
 import pandas as pd
 import traceback
 import sys
+import datetime
 from .langfuse_utils import fetch_langfuse_traces, fetch_langfuse_observations
 from .helpers import LANGFUSE_HOST, LANGFUSE_PROJECT, LANGFUSE_PUBLIC_KEY
+from .data_utils import load_langfuse_favorites, add_to_langfuse_favorites, remove_from_langfuse_favorites
 
 def langfuse_page():
     """랭퓨즈 데이터를 표시하는 페이지"""
@@ -326,7 +328,58 @@ def display_traces_and_details():
                     st.json(selected_trace.get("metadata", {}))
             
             # 관찰 데이터 표시 영역
-            st.markdown("### 🔍 주요 관찰 데이터")
+            col1, col2, col3 = st.columns([5, 1, 1])
+            
+            with col1:
+                st.markdown("### 🔍 주요 관찰 데이터")
+            
+            # 즐겨찾기 버튼 추가
+            with col2:
+                if st.button("✅ 좋은 예제", key="good_favorite", help="이 트레이스를 좋은 예제로 즐겨찾기에 추가합니다"):
+                    # 노트 입력 받기
+                    if "favorite_note" not in st.session_state:
+                        st.session_state.favorite_note = ""
+                        st.session_state.favorite_type = "good"
+                        st.session_state.show_note_input = True
+                    else:
+                        st.session_state.favorite_type = "good"
+                        st.session_state.show_note_input = True
+            
+            with col3:
+                if st.button("❌ 나쁜 예제", key="bad_favorite", help="이 트레이스를 개선이 필요한 나쁜 예제로 즐겨찾기에 추가합니다"):
+                    # 노트 입력 받기
+                    if "favorite_note" not in st.session_state:
+                        st.session_state.favorite_note = ""
+                        st.session_state.favorite_type = "bad"
+                        st.session_state.show_note_input = True
+                    else:
+                        st.session_state.favorite_type = "bad"
+                        st.session_state.show_note_input = True
+            
+            # 노트 입력 폼 표시
+            if st.session_state.get("show_note_input", False):
+                with st.form("note_form"):
+                    note = st.text_area("즐겨찾기 노트 (선택사항)", value=st.session_state.get("favorite_note", ""), 
+                                       help="이 트레이스에 대한 메모를 입력하세요.")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.form_submit_button("저장"):
+                            # 즐겨찾기에 추가
+                            add_to_langfuse_favorites(
+                                selected_trace_id, 
+                                selected_trace.get('name', '익명 트레이스'),
+                                st.session_state.favorite_type,
+                                note
+                            )
+                            st.success(f"트레이스가 {'좋은' if st.session_state.favorite_type == 'good' else '나쁜'} 예제로 즐겨찾기에 추가되었습니다!")
+                            # 입력 폼 숨기기
+                            st.session_state.show_note_input = False
+                    
+                    with col2:
+                        if st.form_submit_button("취소"):
+                            # 입력 폼 숨기기
+                            st.session_state.show_note_input = False
             
             # 관찰 데이터 로드 필요 여부 확인
             should_load = False

@@ -7,11 +7,10 @@ from typing import List, Dict, Any, Callable
 
 # 페이지 임포트
 from page_list.home_page import home_page
-from page_list.prompt_list_page import prompt_list_page
 from page_list.favorite_page import favorite_page
 from page_list.langfuse_page import langfuse_page
 from page_list.helpers import (
-    HOME_PAGE, PROMPT_LIST_PAGE, FAVORITE_PAGE, LANGFUSE_PAGE,
+    HOME_PAGE, FAVORITE_PAGE, LANGFUSE_PAGE,
     APP_TITLE, APP_ICON, APP_LAYOUT, SIDEBAR_WIDTH
 )
 
@@ -67,12 +66,10 @@ class MultiApp:
 
 # 메인 실행 코드
 if __name__ == "__main__":
-    # 멀티앱 인스턴스 생성
     app = MultiApp()
     
-    # 앱 등록 (순서대로 표시됨)
+    # 앱 페이지 추가
     app.add_app(HOME_PAGE, home_page)
-    app.add_app(PROMPT_LIST_PAGE, prompt_list_page)
     app.add_app(FAVORITE_PAGE, favorite_page)
     app.add_app(LANGFUSE_PAGE, langfuse_page)
     

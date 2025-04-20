@@ -1,369 +1,432 @@
 import streamlit as st
+import datetime
 from .data_utils import (
-    load_prompts, save_prompts, 
     load_langfuse_favorites, remove_from_langfuse_favorites
 )
 from .langfuse_utils import fetch_langfuse_observations
-from .helpers import CATEGORIES, MODELS
 
 def favorite_page():
     """즐겨찾기 페이지"""
     
     # 타이틀 및 설명
     st.title("⭐ 즐겨찾기")
-    st.subheader("자주 사용하는 프롬프트와 트레이스 모음")
     
     # 초기화
-    if 'selected_favorite' not in st.session_state:
-        st.session_state.selected_favorite = None
+    if 'expanded_favorite' not in st.session_state:
+        st.session_state.expanded_favorite = None
     
     if 'favorite_observations' not in st.session_state:
-        st.session_state.favorite_observations = []
+        st.session_state.favorite_observations = {}
     
-    # 탭 생성 - 프롬프트, 좋은 예제, 나쁜 예제
-    tabs = st.tabs(["📋 프롬프트", "✅ 좋은 랭퓨즈 예제", "❌ 개선 필요 랭퓨즈 예제"])
+    # 모든 즐겨찾기 데이터 불러오기
+    all_favorites = load_all_favorites()
     
-    # 프롬프트 즐겨찾기 탭
-    with tabs[0]:
-        display_prompt_favorites()
-    
-    # 좋은 랭퓨즈 예제 탭
-    with tabs[1]:
-        # 랭퓨즈 즐겨찾기 불러오기
-        favorites = load_langfuse_favorites()
-        display_langfuse_favorites(favorites.get("good", []), "good")
-    
-    # 개선 필요 랭퓨즈 예제 탭
-    with tabs[2]:
-        # 랭퓨즈 즐겨찾기 불러오기
-        favorites = load_langfuse_favorites()
-        display_langfuse_favorites(favorites.get("bad", []), "bad")
-
-def display_prompt_favorites():
-    """프롬프트 즐겨찾기를 표시합니다"""
-    
-    # 프롬프트 불러오기
-    all_prompts = load_prompts()
-    
-    # 즐겨찾기만 필터링
-    favorite_prompts = [p for p in all_prompts if p.get("favorite", False)]
-    
-    # 정렬 옵션
-    sort_option = st.selectbox(
-        "정렬 기준",
-        options=["최신순", "오래된순", "제목 오름차순", "제목 내림차순"],
-        key="prompt_sort"
-    )
-    
-    # 정렬 적용
-    if sort_option == "최신순":
-        favorite_prompts = sorted(favorite_prompts, key=lambda x: x["created_at"], reverse=True)
-    elif sort_option == "오래된순":
-        favorite_prompts = sorted(favorite_prompts, key=lambda x: x["created_at"])
-    elif sort_option == "제목 오름차순":
-        favorite_prompts = sorted(favorite_prompts, key=lambda x: x["title"])
-    elif sort_option == "제목 내림차순":
-        favorite_prompts = sorted(favorite_prompts, key=lambda x: x["title"], reverse=True)
+    if not all_favorites:
+        st.info("즐겨찾기한 항목이 없습니다. 랭퓨즈 데이터 페이지에서 항목을 즐겨찾기로 등록해보세요.")
+        return
     
     # 즐겨찾기 목록 표시
     st.markdown("---")
+    st.markdown(f"### 즐겨찾기 목록: {len(all_favorites)}개 항목")
     
-    if not favorite_prompts:
-        st.info("즐겨찾기한 프롬프트가 없습니다. '프롬프트 목록' 페이지에서 프롬프트를 즐겨찾기로 등록해보세요.")
-    else:
-        st.markdown(f"### 즐겨찾기 목록: {len(favorite_prompts)}개의 프롬프트")
+    # 데이터 표시 - 테이블 형태로
+    for i, favorite in enumerate(all_favorites):
+        # 현재 아이템의 확장 상태 확인
+        current_id = favorite.get('id', '')
+        is_expanded = st.session_state.expanded_favorite == current_id
         
-        # 프롬프트 카드 형태로 표시
-        cols = st.columns(2)  # 2열 그리드
+        # 행 생성
+        col1, col2, col3 = st.columns([3, 1, 1])
         
-        for i, prompt in enumerate(favorite_prompts):
-            with cols[i % 2]:
-                with st.container():
-                    st.markdown(f"""
-                    <div style="
-                        border: 1px solid #ddd;
-                        border-radius: 10px;
-                        padding: 15px;
-                        margin-bottom: 15px;
-                        background-color: #f9f9f9;
-                    ">
-                        <h3 style="margin-top: 0;">{prompt['title']}</h3>
-                        <p><strong>카테고리:</strong> {prompt['category']}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # 프롬프트 내용
-                    with st.expander("프롬프트 내용 보기"):
-                        st.markdown(f"> {prompt['content']}")
-                        
-                        if prompt.get("description"):
-                            st.markdown(f"**설명:** {prompt['description']}")
-                        
-                        if prompt.get("tags"):
-                            st.markdown(f"**태그:** {', '.join(prompt['tags'])}")
-                        
-                        st.markdown(f"**모델:** {prompt['model']} | **등록일:** {prompt['created_at']}")
-                    
-                    # 버튼 행
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        if st.button("클립보드에 복사", key=f"copy_{i}"):
-                            st.code(prompt["content"], language="")
-                            st.success("클립보드에 복사되었습니다!")
-                    
-                    with col2:
-                        if st.button("즐겨찾기 해제", key=f"unfav_{i}"):
-                            # 즐겨찾기 상태 변경
-                            for p in all_prompts:
-                                if p["id"] == prompt["id"]:
-                                    p["favorite"] = False
-                                    break
-                            
-                            # 저장
-                            save_prompts(all_prompts)
-                            st.success("즐겨찾기에서 해제되었습니다!")
-                            st.experimental_rerun()
-                    
-                    with col3:
-                        if st.button("편집", key=f"edit_{i}"):
-                            st.session_state["edit_prompt_id"] = prompt["id"]
-                            st.session_state["show_edit"] = True
-    
-    # 프롬프트 편집 기능
-    if st.session_state.get("show_edit", False):
+        with col1:
+            st.caption(f"{current_id[:100]}")
+        
+        with col2:
+            # 유형 표시 (좋은 예제, 나쁜 예제)
+            type_text = ""
+            type_color = ""
+            
+            if favorite.get('type') == 'good':
+                type_text = "✅ 좋은 예제"
+                type_color = "#a0d8b3"
+            elif favorite.get('type') == 'bad':
+                type_text = "❌ 나쁜 예제"
+                type_color = "#ffcdd2"
+            
+            st.markdown(f"""
+            <div style="
+                background-color: {type_color};
+                padding: 5px 10px;
+                border-radius: 5px;
+                text-align: center;
+                margin-top: 10px;
+            ">
+                <p style="margin: 0;">{type_text}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            # 상세보기/접기 버튼
+            button_label = "접기" if is_expanded else "상세보기"
+            
+            if st.button(button_label, key=f"view_{i}_{is_expanded}"):
+                # 상태 변경
+                if is_expanded:
+                    # 접기
+                    st.session_state.expanded_favorite = None
+                else:
+                    # 펼치기
+                    st.session_state.expanded_favorite = current_id
+                    # 관찰 데이터 로딩
+                    if current_id not in st.session_state.favorite_observations:
+                        load_observations_for_favorite(favorite)
+                
+                # 상태가 변경되었으므로 페이지 리로드
+                st.rerun()
+        
+        # 구분선 추가
         st.markdown("---")
-        st.subheader("프롬프트 편집")
         
-        # 편집할 프롬프트 찾기
-        edit_id = st.session_state["edit_prompt_id"]
-        edit_prompt = next((p for p in all_prompts if p["id"] == edit_id), None)
+        # 확장된 상세 정보 표시
+        if is_expanded:
+            display_langfuse_details(favorite)
+
+def load_all_favorites():
+    """모든 즐겨찾기 항목을 불러와 시간순으로 정렬합니다"""
+    all_favorites = []
+    
+    # 랭퓨즈 즐겨찾기 불러오기
+    langfuse_favorites = load_langfuse_favorites()
+    
+    # 좋은 예제 추가
+    for favorite in langfuse_favorites.get('good', []):
+        all_favorites.append({
+            'id': favorite.get('id', ''),
+            'name': favorite.get('name', '무제 트레이스'),
+            'type': 'good',
+            'data': favorite,
+            'timestamp': favorite.get('timestamp') or 0
+        })
+    
+    # 나쁜 예제 추가
+    for favorite in langfuse_favorites.get('bad', []):
+        all_favorites.append({
+            'id': favorite.get('id', ''),
+            'name': favorite.get('name', '무제 트레이스'),
+            'type': 'bad',
+            'data': favorite,
+            'timestamp': favorite.get('timestamp') or 0
+        })
+    
+    # 시간순으로 정렬 (최신순)
+    sorted_favorites = sorted(all_favorites, key=lambda x: x.get('timestamp') or 0, reverse=True)
+    
+    return sorted_favorites
+
+def load_observations_for_favorite(favorite):
+    """즐겨찾기한 랭퓨즈 트레이스의 관찰 데이터를 로드합니다"""
+    try:
+        with st.spinner("랭퓨즈에서 트레이스 데이터를 가져오는 중..."):
+            observations = fetch_langfuse_observations(favorite.get('id', ''))
+            st.session_state.favorite_observations[favorite.get('id')] = observations
+            
+        if not observations:
+            st.warning("이 트레이스에는 관찰 데이터가 없습니다. 삭제되었거나 접근할 수 없는 트레이스일 수 있습니다.")
+    except Exception as e:
+        st.error(f"트레이스 데이터를 가져오는 중 오류가 발생했습니다: {str(e)}")
+        st.session_state.favorite_observations[favorite.get('id')] = []
+
+def display_favorite_details(favorite):
+    """즐겨찾기 항목의 상세 정보를 표시합니다"""
+    display_langfuse_details(favorite)
+
+def find_user_question(observations):
+    """사용자의 처음 질문을 찾습니다"""
+    for obs in observations:
+        # LangGraph 형식의 messages 배열 확인
+        if isinstance(obs.get("output"), dict) and "messages" in obs.get("output", {}):
+            messages = obs.get("output", {}).get("messages", [])
+            for msg in messages:
+                if isinstance(msg, dict) and msg.get("type") == "human":
+                    return {
+                        "id": obs.get("id", ""),
+                        "name": obs.get("name", ""),
+                        "input": {"content": msg.get("content", "")}
+                    }
         
-        if edit_prompt:
-            with st.form("edit_form"):
-                prompt_title = st.text_input("프롬프트 제목 *", value=edit_prompt["title"])
+        # 입력 데이터에서 사용자 질문을 찾습니다
+        if obs.get("input") and isinstance(obs.get("input"), dict):
+            # human_input 키가 있는 경우
+            if "human_input" in obs.get("input"):
+                return obs
                 
-                category = st.selectbox(
-                    "카테고리",
-                    options=CATEGORIES,
-                    index=CATEGORIES.index(edit_prompt["category"]) if edit_prompt["category"] in CATEGORIES else 0
-                )
-                
-                prompt_text = st.text_area("프롬프트 내용 *", value=edit_prompt["content"], height=200)
-                
-                tags = st.text_input("태그 (쉼표로 구분)", value=", ".join(edit_prompt.get("tags", [])))
-                
-                model = st.selectbox(
-                    "대상 모델",
-                    options=MODELS,
-                    index=MODELS.index(edit_prompt["model"]) if edit_prompt["model"] in MODELS else 0
-                )
-                
-                description = st.text_area("설명 (선택사항)", value=edit_prompt.get("description", ""), height=100)
-                
-                # 필수 항목 설명 추가
-                st.markdown("<small>* 표시된 항목은 필수 입력 항목입니다</small>", unsafe_allow_html=True)
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    submit = st.form_submit_button("저장")
-                
-                with col2:
-                    cancel = st.form_submit_button("취소")
-                
-                if submit:
-                    if not prompt_title or not prompt_text:
-                        st.error("제목과 프롬프트 내용은 필수 입력 항목입니다.")
-                    else:
-                        # 프롬프트 업데이트
-                        for p in all_prompts:
-                            if p["id"] == edit_id:
-                                p["title"] = prompt_title
-                                p["content"] = prompt_text
-                                p["category"] = category
-                                p["tags"] = [tag.strip() for tag in tags.split(",")] if tags else []
-                                p["model"] = model
-                                p["description"] = description
-                                break
-                        
-                        # 저장
-                        save_prompts(all_prompts)
-                        st.success("프롬프트가 수정되었습니다!")
-                        
-                        # 편집 모드 종료
-                        st.session_state["show_edit"] = False
-                        st.experimental_rerun()
-                
-                if cancel:
-                    # 편집 모드 종료
-                    st.session_state["show_edit"] = False
-                    st.experimental_rerun()
+            # messages 배열이 있는 경우
+            if "messages" in obs.get("input"):
+                messages = obs.get("input").get("messages", [])
+                for msg in messages:
+                    if isinstance(msg, dict) and msg.get("type", "").lower() == "human":
+                        return obs
+        
+        # 출력 데이터에서 메시지를 확인합니다
+        if obs.get("output") and isinstance(obs.get("output"), dict):
+            # messages 배열이 있는 경우
+            if "messages" in obs.get("output"):
+                messages = obs.get("output").get("messages", [])
+                for msg in messages:
+                    if isinstance(msg, dict) and msg.get("type", "").lower() == "human":
+                        # 사용자 메시지를 발견하면 해당 관찰 데이터로 가상의 사용자 질문 객체 생성
+                        return {
+                            "id": obs.get("id", ""),
+                            "name": "사용자 메시지",
+                            "input": {"content": msg.get("content", "")}
+                        }
+        
+        # 이름이 "user" 또는 "human"을 포함하는 관찰 데이터를 찾습니다
+        if "user" in str(obs.get("name", "")).lower() or "human" in str(obs.get("name", "")).lower():
+            return obs
+        
+        # 메타데이터에서 사용자 질문 힌트를 찾습니다
+        if obs.get("metadata") and ("user_message" in str(obs.get("metadata")) or "human_message" in str(obs.get("metadata"))):
+            return obs
+            
+        # 입력 또는 출력 데이터에서 content 키가 있고 type이 "human"인 경우
+        for data_key in ["input", "output"]:
+            data = obs.get(data_key, {})
+            if isinstance(data, dict):
+                if "content" in data and "type" in data and data.get("type", "").lower() == "human":
+                    return obs
+    
+    return None
 
-def display_langfuse_favorites(favorites, type_key):
-    """랭퓨즈 즐겨찾기 목록을 표시하고 관리합니다"""
+def find_final_answer(observations):
+    """최종 답변을 찾습니다"""
+    # 시간순으로 정렬 (가장 마지막 응답을 찾기 위해)
+    # None값이 있는 경우 빈 문자열로 대체하여 정렬 오류 방지
+    sorted_obs = sorted(observations, key=lambda x: x.get("endTime") or "", reverse=True)
     
-    if not favorites:
-        st.info(f"저장된 {'좋은' if type_key == 'good' else '나쁜'} 랭퓨즈 예제가 없습니다. '랭퓨즈 데이터' 페이지에서 추가해보세요.")
-        return
+    for obs in sorted_obs:
+        # 출력 데이터에서 메시지 배열이 있는지 확인 (LangGraph 형식)
+        if isinstance(obs.get("output"), dict) and "messages" in obs.get("output", {}):
+            messages = obs.get("output", {}).get("messages", [])
+            if messages:
+                # 마지막 메시지를 찾아서 최종 답변으로 사용
+                last_message = messages[-1]
+                if isinstance(last_message, dict) and "content" in last_message:
+                    # 가상의 최종 답변 객체 생성
+                    return {
+                        "id": obs.get("id", ""),
+                        "name": obs.get("name", "") or "최종 답변",
+                        "output": {"content": last_message.get("content", "")}
+                    }
+                    
+        # 출력 데이터가 있는 관찰 중 응답 또는 답변으로 보이는 것을 찾습니다
+        if obs.get("output") and isinstance(obs.get("output"), dict):
+            return obs
+            
+        # 이름에 "response", "answer", "output" 등이 포함된 관찰을 찾습니다
+        if any(key in str(obs.get("name", "")).lower() for key in ["response", "answer", "output", "assistant"]):
+            return obs
     
-    # 정렬 옵션
-    sort_option = st.selectbox(
-        "정렬 기준",
-        options=["최신순", "이름순"],
-        key=f"sort_{type_key}"
-    )
-    
-    # 정렬 적용
-    if sort_option == "최신순":
-        # timestamp가 None인 경우는 가장 오래된 것으로 처리
-        sorted_favorites = sorted(favorites, 
-                                 key=lambda x: x.get("timestamp") or 0, 
-                                 reverse=True)
-    else:  # 이름순
-        sorted_favorites = sorted(favorites, 
-                                 key=lambda x: x.get("name", ""))
-    
-    # 즐겨찾기 목록을 카드 형태로 표시
-    st.markdown(f"### {'좋은' if type_key == 'good' else '나쁜'} 예제 목록: {len(sorted_favorites)}개")
-    
-    # 카드 표시를 위한 열 생성
-    cols = st.columns(2)  # 2열 그리드
-    
-    for i, favorite in enumerate(sorted_favorites):
-        with cols[i % 2]:
-            with st.container():
-                # 카드 디자인
-                card_color = "#e5f9e0" if type_key == "good" else "#ffebee"
-                st.markdown(f"""
-                <div style="
-                    border: 1px solid {'#a0d8b3' if type_key == 'good' else '#ffcdd2'};
-                    border-radius: 10px;
-                    padding: 15px;
-                    margin-bottom: 15px;
-                    background-color: {card_color};
-                ">
-                    <h3 style="margin-top: 0;">{favorite.get('name', '이름 없음')}</h3>
-                    <p><strong>ID:</strong> {favorite.get('id', '')[:8]}...</p>
-                    {f"<p><strong>노트:</strong> {favorite.get('note', '')}</p>" if favorite.get('note') else ""}
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # 버튼 행
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    if st.button("자세히 보기", key=f"view_{type_key}_{i}"):
-                        st.session_state.selected_favorite = favorite
-                        st.session_state.favorite_type = type_key
-                        # 랭퓨즈에서 관찰 데이터를 가져오기 위한 플래그 설정
-                        st.session_state.load_favorite_observations = True
-                
-                with col2:
-                    if st.button("즐겨찾기 해제", key=f"unfav_{type_key}_{i}"):
-                        if st.session_state.get(f"confirm_delete_{type_key}_{i}", False):
-                            # 삭제 확인 상태인 경우 실제 삭제 수행
-                            remove_from_langfuse_favorites(favorite["id"], type_key)
-                            st.success("즐겨찾기에서 제거되었습니다!")
-                            st.experimental_rerun()
-                        else:
-                            # 삭제 확인 상태로 변경
-                            st.session_state[f"confirm_delete_{type_key}_{i}"] = True
-                            st.warning("정말 제거하시겠습니까? 다시 한 번 '즐겨찾기 해제' 버튼을 클릭하면 영구적으로 제거됩니다.")
-    
-    # 선택된 트레이스 세부 정보 표시
-    if st.session_state.selected_favorite and st.session_state.favorite_type == type_key:
-        display_selected_favorite()
+    return None
 
-def display_selected_favorite():
-    """선택된 즐겨찾기 항목의 세부 정보를 표시합니다"""
+def find_system_prompts(observations):
+    """ChatVertexAI의 시스템 프롬프트를 찾습니다"""
+    system_prompts = []
+    unique_contents = set()  # 중복 제거를 위한 세트
     
-    st.markdown("---")
-    favorite = st.session_state.selected_favorite
+    for obs in observations:
+        # ChatVertexAI 생성 관찰 데이터 확인 (GENERATION 타입)
+        if obs.get("type") == "GENERATION" and obs.get("name") == "ChatVertexAI":
+            # 입력 메시지 배열에서 시스템 프롬프트 검색
+            input_messages = obs.get("input", [])
+            
+            for msg in input_messages:
+                if isinstance(msg, dict) and msg.get("role") == "system":
+                    content = msg.get("content")
+                    if content and str(content) not in unique_contents:
+                        unique_contents.add(str(content))
+                        system_prompts.append({
+                            "id": obs.get("id", ""),
+                            "name": f"{obs.get('name', '')} - {obs.get('metadata', {}).get('langgraph_node', '알 수 없음')}",
+                            "content": content,
+                            "original_obs": obs
+                        })
+        
+        # 기존 검색 로직 유지 (메타데이터나 입력에서 시스템 프롬프트 검색)        
+        metadata = obs.get("metadata", {})
+        input_data = obs.get("input", {})
+        
+        is_system_prompt = False
+        content = None
+        
+        # 이름에 "system", "prompt", "chatvertexai" 등이 포함된 경우
+        if any(key in str(obs.get("name", "")).lower() for key in ["system", "prompt", "chatvertexai", "vertex"]):
+            is_system_prompt = True
+        
+        # 메타데이터에 시스템 프롬프트 관련 키워드가 있는 경우
+        if isinstance(metadata, dict) and any(key in str(metadata).lower() for key in ["system_prompt", "system_message", "instructions"]):
+            is_system_prompt = True
+            # 메타데이터에서 프롬프트 내용 추출
+            for key in ["system_prompt", "system_message", "system_content", "instructions"]:
+                if key in metadata:
+                    content = metadata[key]
+                    break
+        
+        # 입력이 리스트인 경우 (LangGraph 형식) - 메시지 배열 확인
+        if isinstance(input_data, list):
+            for item in input_data:
+                if isinstance(item, dict):
+                    # role이 system인 메시지 찾기
+                    if item.get("role") == "system" or item.get("type") == "system":
+                        content = item.get("content")
+                        is_system_prompt = True
+                        break
+                    # content 필드와 type이 system인 메시지 찾기
+                    elif "content" in item and item.get("type") == "system":
+                        content = item.get("content")
+                        is_system_prompt = True
+                        break
+            
+        # 입력 데이터에 시스템 프롬프트 관련 키워드가 있는 경우
+        if isinstance(input_data, dict) and any(key in str(input_data).lower() for key in ["system_prompt", "system_message", "instructions"]):
+            is_system_prompt = True
+            # 입력 데이터에서 프롬프트 내용 추출
+            for key in ["system_prompt", "system_message", "system_content", "instructions"]:
+                if key in input_data:
+                    content = input_data[key]
+                    break
+                    
+        if is_system_prompt:
+            # 중복 검사 - 같은 내용의 프롬프트는 추가하지 않음
+            if content and str(content) not in unique_contents:
+                unique_contents.add(str(content))
+                system_prompts.append({
+                    "id": obs.get("id", ""),
+                    "name": obs.get("name", ""),
+                    "content": content,
+                    "original_obs": obs
+                })
     
-    st.markdown(f"## {favorite.get('name', '이름 없음')}")
+    return system_prompts
+
+def display_langfuse_details(favorite):
+    """랭퓨즈 트레이스 상세 정보를 표시합니다"""
+    st.markdown(f"### {favorite.get('name', '무제 트레이스')}")
     st.markdown(f"**ID:** {favorite.get('id', '')}")
     
-    if favorite.get('note'):
-        st.markdown(f"**노트:** {favorite.get('note', '')}")
+    if favorite.get('data', {}).get('note'):
+        st.markdown(f"**노트:** {favorite.get('data', {}).get('note', '')}")
     
-    # 관찰 데이터 로드 필요 여부 확인
-    should_load = False
-    if 'load_favorite_observations' not in st.session_state:
-        st.session_state.load_favorite_observations = True
-        should_load = True
-    elif st.session_state.load_favorite_observations:
-        should_load = True
-        st.session_state.load_favorite_observations = False
+    # 현재 관찰 데이터 가져오기
+    observations = st.session_state.favorite_observations.get(favorite.get('id'), [])
     
-    # 관찰 데이터 가져오기
-    if should_load:
-        try:
-            with st.spinner("랭퓨즈에서 트레이스 데이터를 가져오는 중..."):
-                observations = fetch_langfuse_observations(favorite.get('id', ''))
-                st.session_state.favorite_observations = observations
-                
-            if not observations:
-                st.warning("이 트레이스에는 관찰 데이터가 없습니다. 삭제되었거나 접근할 수 없는 트레이스일 수 있습니다.")
-        except Exception as e:
-            st.error(f"트레이스 데이터를 가져오는 중 오류가 발생했습니다: {str(e)}")
+    if not observations:
+        with st.spinner("랭퓨즈에서 트레이스 데이터를 가져오는 중..."):
+            observations = fetch_langfuse_observations(favorite.get('id', ''))
+            st.session_state.favorite_observations[favorite.get('id')] = observations
     
-    # 저장된 관찰 데이터 표시
-    observations = st.session_state.favorite_observations
     if observations:
-        st.success(f"{len(observations)}개의 관찰 데이터가 있습니다.")
+        # 사용자 질문, 최종 답변, 시스템 프롬프트 추출
+        user_question = find_user_question(observations)
+        final_answer = find_final_answer(observations)
+        system_prompts = find_system_prompts(observations)
         
-        # 관찰 데이터를 유형별로 정렬
-        sorted_observations = sorted(observations, key=lambda x: x.get("type", ""))
+        # 주요 데이터 표시
+        tabs = st.tabs(["사용자 질문", "최종 답변", "시스템 프롬프트"])
         
-        # 관찰 데이터 표시 옵션
-        with st.expander("관찰 데이터 보기", expanded=True):
-            st.markdown("### 관찰 데이터")
-            
-            for idx, obs in enumerate(sorted_observations):
-                with st.container():
-                    # 구분선 추가
-                    if idx > 0:
-                        st.markdown("---")
+        with tabs[0]:  # 사용자 질문 탭
+            if user_question:
+                # 입력 데이터에서 사용자 질문 찾기
+                input_data = user_question.get("input", {})
+                
+                # 데이터 추출 및 표시
+                content = None
+                
+                # JSON 형식인 경우 사람이 읽기 쉽게 처리
+                if isinstance(input_data, dict):
+                    if "content" in input_data:
+                        content = input_data["content"]
+                    elif "message" in input_data:
+                        content = input_data["message"]
+                    elif "human_input" in input_data:
+                        content = input_data["human_input"]
+                else:
+                    content = str(input_data)
+                
+                # 내용 표시
+                if content:
+                    st.markdown("### 질문 내용")
+                    st.markdown(f"> {content}")
+                else:
+                    st.markdown("*질문 내용을 찾을 수 없습니다*")
+            else:
+                st.info("사용자 질문을 찾을 수 없습니다.")
+        
+        with tabs[1]:  # 최종 답변 탭
+            if final_answer:
+                # 출력 데이터에서 최종 답변 찾기
+                output_data = final_answer.get("output", {})
+                
+                # 데이터 추출 및 표시
+                content = None
+                
+                # JSON 형식인 경우 사람이 읽기 쉽게 처리
+                if isinstance(output_data, dict):
+                    # 메시지 배열이 있는 경우 (LangGraph 형식)
+                    if "messages" in output_data:
+                        messages = output_data.get("messages", [])
+                        if messages:  # 메시지가 하나 이상 있으면
+                            # 마지막 메시지를, 없으면 어시스턴트 타입의 메시지를 찾음
+                            last_message = messages[-1]
+                            if isinstance(last_message, dict) and "content" in last_message:
+                                content = last_message.get("content", "")
+                            else:
+                                # 타입이 assistant인 메시지 찾기 (백업 방법)
+                                for msg in messages:
+                                    if isinstance(msg, dict) and msg.get("type") == "assistant":
+                                        content = msg.get("content", "")
+                                        break
+                    # 일반적인 출력 형식
+                    elif "content" in output_data:
+                        content = output_data["content"]
+                    elif "message" in output_data:
+                        content = output_data["message"]
+                    elif "response" in output_data:
+                        content = output_data["response"]
+                    elif "answer" in output_data:
+                        content = output_data["answer"]
+                else:
+                    content = str(output_data)
+                
+                # 내용 표시
+                if content:
+                    st.markdown("### 답변 내용")
+                    st.markdown(f"> {content}")
+                else:
+                    st.markdown("*답변 내용을 찾을 수 없습니다*")
+            else:
+                st.info("최종 답변을 찾을 수 없습니다.")
+        
+        with tabs[2]:  # 시스템 프롬프트 탭
+            if system_prompts:
+                st.markdown("### 시스템 프롬프트")
+                for idx, prompt in enumerate(system_prompts):
+                    # 프롬프트 내용이 있는 경우만 표시
+                    if prompt.get("content"):
+                        st.markdown(f"#### 프롬프트 {idx+1}: {prompt.get('name', '무제')}")
+                        st.markdown("> " + prompt.get("content").replace("\n", "\n> "))
+                        
+                        # 구분선 추가 (마지막 항목이 아닌 경우)
+                        if idx < len(system_prompts) - 1:
+                            st.markdown("---")
                     
-                    # 관찰 데이터 헤더 정보
-                    st.markdown(f"**{idx+1}. {obs.get('name', '무제')}** ({obs.get('type', '알 수 없음')})")
-                    
-                    # 시간 정보 표시
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.markdown(f"**시작:** {obs.get('startTime', '')}")
-                    with col2:
-                        st.markdown(f"**종료:** {obs.get('endTime', '')}")
-                    
-                    # 입력/출력 데이터를 탭으로 표시
-                    tabs = st.tabs(["입력", "출력", "메타데이터"])
-                    
-                    with tabs[0]:  # 입력 탭
-                        if obs.get("input"):
-                            # 시스템 프롬프트 강조 표시
-                            if isinstance(obs.get("input"), list):
-                                for item in obs.get("input", []):
-                                    if isinstance(item, dict) and (item.get("role") == "system" or item.get("type") == "system"):
-                                        st.markdown("### ⚙️ 시스템 프롬프트")
-                                        st.markdown(f"> {item.get('content', '')}")
-                                        st.markdown("---")
-                            
-                            # 전체 입력 데이터 표시
-                            st.json(obs.get("input", {}))
-                        else:
-                            st.info("입력 데이터가 없습니다.")
-                    
-                    with tabs[1]:  # 출력 탭
-                        if obs.get("output"):
-                            st.json(obs.get("output", {}))
-                        else:
-                            st.info("출력 데이터가 없습니다.")
-                    
-                    with tabs[2]:  # 메타데이터 탭
-                        if obs.get("metadata"):
-                            st.json(obs.get("metadata", {}))
-                        else:
-                            st.info("메타데이터가 없습니다.")
+            else:
+                st.info("시스템 프롬프트를 찾을 수 없습니다.")
     else:
-        st.info("관찰 데이터를 불러오는 중입니다...") 
+        st.warning("이 트레이스에는 관찰 데이터가 없습니다. 삭제되었거나 접근할 수 없는 트레이스일 수 있습니다.")
+    
+    # 즐겨찾기 해제 버튼
+    if st.button("즐겨찾기 해제", key=f"unfav_{favorite.get('id')}"):
+        remove_from_langfuse_favorites(favorite.get('id'), favorite.get('type'))
+        st.success("즐겨찾기에서 해제되었습니다!")
+        st.rerun() 

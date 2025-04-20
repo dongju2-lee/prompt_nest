@@ -1,3 +1,58 @@
+# Python 관련 파일
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 가상환경
 venv/
+.venv/
+env/
+ENV/
+virtualenv/
+
+# 환경 변수 파일 (.env.example은 제외)
+.env
+.env.local
+.env.*.local
 !.env.example
+
+# 데이터 디렉토리
 data/
+
+# IDE/에디터 설정 파일
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+*.sublime-workspace
+*.sublime-project
+
+# 로그 파일
+*.log
+logs/
+
+# 임시 파일
+*.tmp
+*.bak
+*.cache
+.coverage
+htmlcov/
+.pytest_cache/ 

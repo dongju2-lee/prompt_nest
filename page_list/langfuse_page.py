@@ -86,6 +86,175 @@ def langfuse_page():
     elif st.session_state.traces:
         display_traces_and_details()
 
+def find_user_question(observations):
+    """사용자의 처음 질문을 찾습니다"""
+    for obs in observations:
+        # LangGraph 형식의 messages 배열 확인 (스크린샷에서 확인한 형식)
+        if isinstance(obs.get("output"), dict) and "messages" in obs.get("output", {}):
+            messages = obs.get("output", {}).get("messages", [])
+            for msg in messages:
+                if isinstance(msg, dict) and msg.get("type") == "human":
+                    return {
+                        "id": obs.get("id", ""),
+                        "name": obs.get("name", ""),
+                        "input": {"content": msg.get("content", "")}
+                    }
+        
+        # 입력 데이터에서 사용자 질문을 찾습니다
+        if obs.get("input") and isinstance(obs.get("input"), dict):
+            # human_input 키가 있는 경우
+            if "human_input" in obs.get("input"):
+                return obs
+                
+            # messages 배열이 있는 경우
+            if "messages" in obs.get("input"):
+                messages = obs.get("input").get("messages", [])
+                for msg in messages:
+                    if isinstance(msg, dict) and msg.get("type", "").lower() == "human":
+                        return obs
+        
+        # 출력 데이터에서 메시지를 확인합니다
+        if obs.get("output") and isinstance(obs.get("output"), dict):
+            # messages 배열이 있는 경우
+            if "messages" in obs.get("output"):
+                messages = obs.get("output").get("messages", [])
+                for msg in messages:
+                    if isinstance(msg, dict) and msg.get("type", "").lower() == "human":
+                        # 사용자 메시지를 발견하면 해당 관찰 데이터로 가상의 사용자 질문 객체 생성
+                        return {
+                            "id": obs.get("id", ""),
+                            "name": "사용자 메시지",
+                            "input": {"content": msg.get("content", "")}
+                        }
+        
+        # 이름이 "user" 또는 "human"을 포함하는 관찰 데이터를 찾습니다
+        if "user" in str(obs.get("name", "")).lower() or "human" in str(obs.get("name", "")).lower():
+            return obs
+        
+        # 메타데이터에서 사용자 질문 힌트를 찾습니다
+        if obs.get("metadata") and ("user_message" in str(obs.get("metadata")) or "human_message" in str(obs.get("metadata"))):
+            return obs
+            
+        # 입력 또는 출력 데이터에서 content 키가 있고 type이 "human"인 경우
+        for data_key in ["input", "output"]:
+            data = obs.get(data_key, {})
+            if isinstance(data, dict):
+                if "content" in data and "type" in data and data.get("type", "").lower() == "human":
+                    return obs
+    
+    return None
+
+def find_final_answer(observations):
+    """최종 답변을 찾습니다"""
+    # 시간순으로 정렬 (가장 마지막 응답을 찾기 위해)
+    # None값이 있는 경우 빈 문자열로 대체하여 정렬 오류 방지
+    sorted_obs = sorted(observations, key=lambda x: x.get("endTime") or "", reverse=True)
+    
+    for obs in sorted_obs:
+        # 출력 데이터에서 메시지 배열이 있는지 확인 (LangGraph 형식)
+        if isinstance(obs.get("output"), dict) and "messages" in obs.get("output", {}):
+            messages = obs.get("output", {}).get("messages", [])
+            if messages:
+                # 마지막 메시지를 찾아서 최종 답변으로 사용
+                last_message = messages[-1]
+                if isinstance(last_message, dict) and "content" in last_message:
+                    # 가상의 최종 답변 객체 생성
+                    return {
+                        "id": obs.get("id", ""),
+                        "name": obs.get("name", "") or "최종 답변",
+                        "output": {"content": last_message.get("content", "")}
+                    }
+                    
+        # 출력 데이터가 있는 관찰 중 응답 또는 답변으로 보이는 것을 찾습니다
+        if obs.get("output") and isinstance(obs.get("output"), dict):
+            return obs
+            
+        # 이름에 "response", "answer", "output" 등이 포함된 관찰을 찾습니다
+        if any(key in str(obs.get("name", "")).lower() for key in ["response", "answer", "output", "assistant"]):
+            return obs
+    
+    return None
+
+def find_system_prompts(observations):
+    """ChatVertexAI의 시스템 프롬프트를 찾습니다"""
+    system_prompts = []
+    unique_contents = set()  # 중복 제거를 위한 세트
+    
+    for obs in observations:
+        # ChatVertexAI 생성 관찰 데이터 확인 (GENERATION 타입)
+        if obs.get("type") == "GENERATION" and obs.get("name") == "ChatVertexAI":
+            # 입력 메시지 배열에서 시스템 프롬프트 검색
+            input_messages = obs.get("input", [])
+            
+            for msg in input_messages:
+                if isinstance(msg, dict) and msg.get("role") == "system":
+                    content = msg.get("content")
+                    if content and str(content) not in unique_contents:
+                        unique_contents.add(str(content))
+                        system_prompts.append({
+                            "id": obs.get("id", ""),
+                            "name": f"{obs.get('name', '')} - {obs.get('metadata', {}).get('langgraph_node', '알 수 없음')}",
+                            "content": content,
+                            "original_obs": obs
+                        })
+        
+        # 기존 검색 로직 유지 (메타데이터나 입력에서 시스템 프롬프트 검색)        
+        metadata = obs.get("metadata", {})
+        input_data = obs.get("input", {})
+        
+        is_system_prompt = False
+        content = None
+        
+        # 이름에 "system", "prompt", "chatvertexai" 등이 포함된 경우
+        if any(key in str(obs.get("name", "")).lower() for key in ["system", "prompt", "chatvertexai", "vertex"]):
+            is_system_prompt = True
+        
+        # 메타데이터에 시스템 프롬프트 관련 키워드가 있는 경우
+        if isinstance(metadata, dict) and any(key in str(metadata).lower() for key in ["system_prompt", "system_message", "instructions"]):
+            is_system_prompt = True
+            # 메타데이터에서 프롬프트 내용 추출
+            for key in ["system_prompt", "system_message", "system_content", "instructions"]:
+                if key in metadata:
+                    content = metadata[key]
+                    break
+        
+        # 입력이 리스트인 경우 (LangGraph 형식) - 메시지 배열 확인
+        if isinstance(input_data, list):
+            for item in input_data:
+                if isinstance(item, dict):
+                    # role이 system인 메시지 찾기
+                    if item.get("role") == "system" or item.get("type") == "system":
+                        content = item.get("content")
+                        is_system_prompt = True
+                        break
+                    # content 필드와 type이 system인 메시지 찾기
+                    elif "content" in item and item.get("type") == "system":
+                        content = item.get("content")
+                        is_system_prompt = True
+                        break
+            
+        # 입력 데이터에 시스템 프롬프트 관련 키워드가 있는 경우
+        if isinstance(input_data, dict) and any(key in str(input_data).lower() for key in ["system_prompt", "system_message", "instructions"]):
+            is_system_prompt = True
+            # 입력 데이터에서 프롬프트 내용 추출
+            for key in ["system_prompt", "system_message", "system_content", "instructions"]:
+                if key in input_data:
+                    content = input_data[key]
+                    break
+                    
+        if is_system_prompt:
+            # 중복 검사 - 같은 내용의 프롬프트는 추가하지 않음
+            if content and str(content) not in unique_contents:
+                unique_contents.add(str(content))
+                system_prompts.append({
+                    "id": obs.get("id", ""),
+                    "name": obs.get("name", ""),
+                    "content": content,
+                    "original_obs": obs
+                })
+    
+    return system_prompts
+
 def display_traces_and_details():
     """트레이스 목록과 세부 정보를 표시합니다"""
     
@@ -157,7 +326,7 @@ def display_traces_and_details():
                     st.json(selected_trace.get("metadata", {}))
             
             # 관찰 데이터 표시 영역
-            st.markdown("### 관찰 데이터")
+            st.markdown("### 🔍 주요 관찰 데이터")
             
             # 관찰 데이터 로드 필요 여부 확인
             should_load = False
@@ -182,81 +351,171 @@ def display_traces_and_details():
                     with st.expander("오류 세부 정보"):
                         st.code(traceback.format_exc())
             
-            # 저장된 관찰 데이터 표시
+            # 저장된 관찰 데이터에서 주요 정보 추출
             observations = st.session_state.observations
             if observations:
                 st.success(f"{len(observations)}개의 관찰 데이터가 있습니다.")
                 
-                # 관찰 데이터 종류별로 탭 생성
-                tabs = {}
-                for obs in observations:
-                    obs_type = obs.get("type", "기타")
-                    if obs_type not in tabs:
-                        tabs[obs_type] = []
-                    tabs[obs_type].append(obs)
+                # 사용자 질문, 최종 답변, 시스템 프롬프트 추출
+                user_question = find_user_question(observations)
+                final_answer = find_final_answer(observations)
+                system_prompts = find_system_prompts(observations)
                 
-                # 탭 UI 생성
-                if tabs:
-                    tab_names = list(tabs.keys())
-                    selected_tabs = st.tabs(tab_names)
+                # 주요 데이터 표시
+                tabs = st.tabs(["사용자 질문", "최종 답변", "시스템 프롬프트"])
+                
+                with tabs[0]:  # 사용자 질문 탭
+                    if user_question:
+                        st.markdown(f"**이름:** {user_question.get('name', '무제')}")
+                        st.markdown(f"**ID:** {user_question.get('id', '')}")
+                        
+                        # 입력 데이터에서 사용자 질문 찾기
+                        input_data = user_question.get("input", {})
+                        
+                        # 깔끔하게 내용만 표시
+                        st.markdown("---")
+                        st.markdown("### 질문 내용")
+                        
+                        # 데이터 추출 및 표시
+                        content = None
+                        
+                        # JSON 형식인 경우 사람이 읽기 쉽게 처리
+                        if isinstance(input_data, dict):
+                            if "content" in input_data:
+                                content = input_data["content"]
+                            elif "message" in input_data:
+                                content = input_data["message"]
+                            elif "human_input" in input_data:
+                                content = input_data["human_input"]
+                        else:
+                            content = str(input_data)
+                        
+                        # 내용 표시
+                        if content:
+                            st.markdown(f"> {content}")
+                        else:
+                            st.markdown("*내용을 찾을 수 없습니다*")
+                    else:
+                        st.info("사용자 질문을 찾을 수 없습니다.")
+                
+                with tabs[1]:  # 최종 답변 탭
+                    if final_answer:
+                        st.markdown(f"**이름:** {final_answer.get('name', '무제')}")
+                        st.markdown(f"**ID:** {final_answer.get('id', '')}")
+                        
+                        # 출력 데이터에서 최종 답변 찾기
+                        output_data = final_answer.get("output", {})
+                        
+                        # 깔끔하게 내용만 표시
+                        st.markdown("---")
+                        st.markdown("### 답변 내용")
+                        
+                        # 데이터 추출 및 표시
+                        content = None
+                        
+                        # JSON 형식인 경우 사람이 읽기 쉽게 처리
+                        if isinstance(output_data, dict):
+                            # 메시지 배열이 있는 경우 (LangGraph 형식)
+                            if "messages" in output_data:
+                                messages = output_data.get("messages", [])
+                                if messages:  # 메시지가 하나 이상 있으면
+                                    # 마지막 메시지를, 없으면 어시스턴트 타입의 메시지를 찾음
+                                    last_message = messages[-1]
+                                    if isinstance(last_message, dict) and "content" in last_message:
+                                        content = last_message.get("content", "")
+                                    else:
+                                        # 타입이 assistant인 메시지 찾기 (백업 방법)
+                                        for msg in messages:
+                                            if isinstance(msg, dict) and msg.get("type") == "assistant":
+                                                content = msg.get("content", "")
+                                                break
+                            # 일반적인 출력 형식
+                            elif "content" in output_data:
+                                content = output_data["content"]
+                            elif "message" in output_data:
+                                content = output_data["message"]
+                            elif "response" in output_data:
+                                content = output_data["response"]
+                            elif "answer" in output_data:
+                                content = output_data["answer"]
+                        else:
+                            content = str(output_data)
+                        
+                        # 내용 표시
+                        if content:
+                            st.markdown(f"> {content}")
+                        else:
+                            st.markdown("*내용을 찾을 수 없습니다*")
+                            st.markdown("#### 전체 출력 데이터:")
+                            st.json(output_data)
+                    else:
+                        st.info("최종 답변을 찾을 수 없습니다.")
+                
+                with tabs[2]:  # 시스템 프롬프트 탭
+                    if system_prompts:
+                        for idx, prompt in enumerate(system_prompts):
+                            # 프롬프트 내용 표시
+                            st.markdown(f"### 프롬프트 {idx+1}")
+                            
+                            # 이름과 ID 표시
+                            st.markdown(f"**노드:** {prompt.get('name', '무제')}")
+                            
+                            # 프롬프트 내용
+                            if prompt.get("content"):
+                                st.markdown("---")
+                                st.markdown("> " + prompt.get("content").replace("\n", "\n> "))
+                            else:
+                                st.markdown("*내용을 찾을 수 없습니다*")
+                            
+                            # 구분선 추가 (마지막 항목이 아닌 경우)
+                            if idx < len(system_prompts) - 1:
+                                st.markdown("---")
+                    else:
+                        st.info("ChatVertexAI 시스템 프롬프트를 찾을 수 없습니다.")
+                
+                # 모든 관찰 데이터 표시 옵션
+                with st.expander("모든 관찰 데이터 보기", expanded=False):
+                    st.markdown("### 전체 관찰 데이터")
                     
-                    for i, tab_name in enumerate(tab_names):
-                        with selected_tabs[i]:
-                            for obs_idx, obs in enumerate(tabs[tab_name]):
-                                # 각 관찰 데이터를 위한 컨테이너
-                                with st.container():
-                                    # 제목 및 상세 정보 토글 버튼
-                                    col1, col2 = st.columns([4, 1])
-                                    
-                                    with col1:
-                                        st.markdown(f"**{obs.get('name', '무제')}** ({obs.get('id', '')})")
-                                    
-                                    with col2:
-                                        # 관찰 데이터 ID를 키로 사용해 버튼 토글
-                                        button_key = f"toggle_{obs.get('id', '')}_{obs_idx}"
-                                        if st.button("상세 정보", key=button_key):
-                                            if st.session_state.expanded_observation == obs.get('id', ''):
-                                                # 이미 확장된 상태면 닫기
-                                                st.session_state.expanded_observation = None
-                                            else:
-                                                # 확장하기
-                                                st.session_state.expanded_observation = obs.get('id', '')
-                                    
-                                    # 해당 관찰 데이터가 확장 상태인 경우 상세 정보 표시
-                                    if st.session_state.expanded_observation == obs.get('id', ''):
-                                        # 시간 정보 및 지연시간 표시
-                                        col1, col2 = st.columns(2)
-                                        with col1:
-                                            st.markdown(f"**시작:** {obs.get('startTime', '')}")
-                                            st.markdown(f"**종료:** {obs.get('endTime', '')}")
-                                        
-                                        with col2:
-                                            st.markdown(f"**지연시간:** {obs.get('latency', '')} ms")
-                                            st.markdown(f"**유형:** {obs.get('type', '')}")
-                                        
-                                        # 상세 데이터 표시
-                                        data_tabs = st.tabs(["메타데이터", "입력", "출력"])
-                                        
-                                        with data_tabs[0]:  # 메타데이터 탭
-                                            if obs.get("metadata"):
-                                                st.json(obs.get("metadata", {}))
-                                            else:
-                                                st.info("메타데이터가 없습니다.")
-                                        
-                                        with data_tabs[1]:  # 입력 탭
-                                            if obs.get("input"):
-                                                st.json(obs.get("input", {}))
-                                            else:
-                                                st.info("입력 데이터가 없습니다.")
-                                        
-                                        with data_tabs[2]:  # 출력 탭
-                                            if obs.get("output"):
-                                                st.json(obs.get("output", {}))
-                                            else:
-                                                st.info("출력 데이터가 없습니다.")
-                                    
-                                    # 구분선 추가
-                                    st.markdown("---")
+                    # 데이터 유형별로 정렬
+                    sorted_observations = sorted(observations, key=lambda x: x.get("type", ""))
+                    
+                    for idx, obs in enumerate(sorted_observations):
+                        with st.container():
+                            # 구분선 추가 (첫 번째 항목 제외)
+                            if idx > 0:
+                                st.markdown("---")
+                                
+                            # 관찰 데이터 헤더 정보
+                            st.markdown(f"**{idx+1}. {obs.get('name', '무제')}** ({obs.get('id', '')})")
+                            st.markdown(f"**유형:** {obs.get('type', '알 수 없음')}")
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.markdown(f"**시작:** {obs.get('startTime', '')}")
+                            with col2:
+                                st.markdown(f"**종료:** {obs.get('endTime', '')}")
+                            
+                            # 탭을 사용하여 상세 데이터 표시 (확장 패널 대신)
+                            data_tabs = st.tabs(["메타데이터", "입력", "출력"])
+                            
+                            with data_tabs[0]:  # 메타데이터 탭
+                                if obs.get("metadata"):
+                                    st.json(obs.get("metadata", {}))
+                                else:
+                                    st.info("메타데이터가 없습니다.")
+                            
+                            with data_tabs[1]:  # 입력 탭
+                                if obs.get("input"):
+                                    st.json(obs.get("input", {}))
+                                else:
+                                    st.info("입력 데이터가 없습니다.")
+                            
+                            with data_tabs[2]:  # 출력 탭
+                                if obs.get("output"):
+                                    st.json(obs.get("output", {}))
+                                else:
+                                    st.info("출력 데이터가 없습니다.")
             else:
                 st.info("이 트레이스에는 관찰 데이터가 없습니다.")
         else:
